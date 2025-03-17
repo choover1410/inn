@@ -21,16 +21,16 @@ class conditioning_network(nn.Module):
                 super().__init__()
             def forward(self, x):
                 if x[:,0,0].shape == (16,):
-                    out = x.view(16,4,8,8) # for config_1  change this to out = x.view(16,2,8,8)
+                    out = x.view(16,1,8,8) # for config_1  change this to out = x.view(16,2,8,8)
                 elif x[:,0,0].shape == (1000,):
-                    out = x.view(1000,4,8,8) # for config_1  change this to out = x.view(1000,2,8,8)
+                    out = x.view(1000,1,8,8) # for config_1  change this to out = x.view(1000,2,8,8)
                 elif x[:,0,0].shape == (1,):
-                    out = x.view(1,4,8,8) # for config_1  change this to out = x.view(1,2,8,8)
+                    out = x.view(1,1,8,8) # for config_1  change this to out = x.view(1,2,8,8)
                 return out
 
         self.multiscale = nn.ModuleList([
                            nn.Sequential(Unflatten(),
-                                         nn.ConvTranspose2d(4,  48, 2, padding=0), # for config_1  change this to nn.ConvTranspose2d(2,  48, 2, padding=0)
+                                         nn.ConvTranspose2d(1,  48, 2, padding=0), # for config_1  change this to nn.ConvTranspose2d(2,  48, 2, padding=0)
                                          nn.ReLU(inplace=True),
                                          nn.ConvTranspose2d(48, 48, 2, padding=1,stride=2)),
                            nn.Sequential(nn.ReLU(inplace=True),
@@ -42,6 +42,7 @@ class conditioning_network(nn.Module):
                            nn.Sequential(nn.ReLU(inplace=True),
                                          nn.AvgPool2d(6),
                                          Flatten(),
+                                         # CBH
                                          nn.Linear(12800, 9600),
                                          nn.ReLU(inplace=True),
                                          nn.Linear(9600, 6400),

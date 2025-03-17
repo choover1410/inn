@@ -20,10 +20,84 @@ from args import args, device
 
 import torchvision.utils as vutils
 
+import numpy as np
+from torch.utils.data import DataLoader, Dataset, TensorDataset
+import torch
+import os
+import numpy as np
+from PIL import Image
+from torchvision import transforms
+
+
+class CombinedDataset(Dataset):
+    def __init__(self, image_dir, timeseries_dir, transform=None):
+        """
+        Args:
+            image_dir (str): Directory containing image files.
+            timeseries_dir (str): Directory containing time series text files.
+            transform (callable, optional): Optional transform to be applied on the images.
+        """
+        self.image_dir = image_dir
+        self.timeseries_dir = timeseries_dir
+        self.transform = transform
+
+        # Get sorted list of image and timeseries file paths
+        self.image_paths = sorted([
+            os.path.join(image_dir, fname) for fname in os.listdir(image_dir)
+            if fname.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ])
+        
+        self.timeseries_paths = sorted([
+            os.path.join(timeseries_dir, fname) for fname in os.listdir(timeseries_dir)
+            if fname.lower().endswith('.csv')
+        ])
+        
+        assert len(self.image_paths) == len(self.timeseries_paths), (
+            f"Number of images ({len(self.image_paths)}) and time series files ({len(self.timeseries_paths)}) must match"
+        )
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        # Load and transform the image
+        image = Image.open(self.image_paths[idx]).convert("1")
+        if self.transform:
+            image = self.transform(image)
+        
+        # Load the corresponding time series data from text file
+        timeseries_path = self.timeseries_paths[idx]
+        timeseries = np.loadtxt(timeseries_path, dtype=np.float32)
+        timeseries = torch.tensor(timeseries, dtype=torch.float32)
+
+        return image, timeseries
+
+
+
+
+
 def main():
-    # load the data here
-    train_loader, test_loader, sample_loader, test_loader_nll = load_data()
-    print('loaded the data.........')
+    data_transforms = transforms.Compose([
+        #transforms.Resize((1250, 1250)),  # Resize images
+        transforms.ToTensor(),          # Convert to tensor
+    ])
+
+    # Example usage
+    image_dir = 'utils/test_data/'
+    timeseries_dir = 'utils/test_data_y/'
+
+    combined_dataset = CombinedDataset(image_dir, timeseries_dir, transform=data_transforms)
+    train_loader = DataLoader(combined_dataset, batch_size=2, shuffle=True)
+
+    # Iterate through the DataLoader
+    for images, timeseries in train_loader:
+        print(f"Images batch shape: {images.shape}")
+        print(f"Timeseries batch shape: {timeseries.shape}")
+
+
+
+
+
 
 
     # this is the s and the t network
@@ -59,6 +133,8 @@ def main():
     optimizer = torch.optim.Adam(combine_parameters, lr=args.lr, weight_decay=args.weight_decay)
 
 
+
+
     def train(N_epochs, max_epochs):
         INN_network.train()
         cond_network.train()
@@ -66,26 +142,29 @@ def main():
         for i, (x, y) in enumerate(train_loader):
             print(f"{i} of {len(train_loader)}, epoch: {N_epochs} of {max_epochs}")
             
-            #print(f"Full X Shape: {y.shape}")
-            #print(f"Full Y Shape: {y.shape}")
-            #tensor_2d_x = x[0].reshape((64, 64))
-            #tensor_2d_y = y[0].reshape((8, 8))
+            print(f"Full X Shape: {x.shape}")
+            print(f"Full Y Shape: {y.shape}")
+
+            # DEBUG
+            #tensor_2d_x = x[0].reshape((1250, 1250))
+            #tensor_2d_y = y[0].reshape((1, 25))
             #vutils.save_image(tensor_2d_x, f"input_images/test_x_{i}_{N_epochs}.jpg")
-            #vutils.save_image(tensor_2d_y, f"input_images/test_y_{i}_{N_epochs}.jpg")
+            #utils.save_image(tensor_2d_y, f"input_images/test_y_{i}_{N_epochs}.jpg")
 
             x, y = x.to(device), y.to(device)
 
             # Unflattens the [1x4096] into [64x64]
-            x = x.view(16,1,64,64)
+            x = x.view(2,1,1250,1250)
 
             # for config_1  change this to y = y.view(16,2,64)
             # Ensures Y is [4 x 64]
-            y = y.view(16,1,64)
+            y = y.view(2,1,25)
 
             tic = time()
 
             # Gives results from running forward through Conditioning Network
             y1 = cond_network(y)
+            print(f"y1: {y1}")
             c = y1[2]   
             c2 = y1[1]
             c3 = y1[0]
@@ -196,45 +275,6 @@ def main():
                 std_sample = std_sample.reshape(64,64)
                 plot_std(std_sample,epoch)
 
-    domain = 4096
-    def test_NLL(epoch):
-        INN_network.eval()
-        cond_network.eval()
-        final_concat = []
-        for batch_idx, (input, target) in enumerate(test_loader_nll):
-            input, target = input.to(device), target.to(device) 
-            input12, target = input.view(128,1,64,64), target.view(128,1,64)   # for config_1  change this to target = target.view(128,2,64)
-            N_samples = 1000
-            labels_test1 = target
-
-            for jj in range(128):
-                labels_test = labels_test1[jj,:,:]
-                x = input12[jj,:,:,:]
-                labels_test = labels_test.cpu().data.numpy()
-                l = np.repeat(np.array(labels_test)[np.newaxis,:,:], N_samples, axis=0)
-                l = torch.Tensor(l).to(device)            
-                z = torch.randn(N_samples,4096).to(device)
-                with torch.no_grad():
-                    y1 = cond_network(l)
-                    input = x.view(1,4096)
-                    c = y1[2]   
-                    c2 = y1[1]
-                    c3 = y1[0]
-                    c4 = y1[3]
-                    val = INN_network(z,c,c2,c3,c4,forward=False)
-                rev_x = val.cpu().data.numpy()
-                input1 = x.cpu().data.numpy()
-                input1 = input1.reshape(1,1,64,64)
-                rev_x = rev_x.reshape(1000,1,64,64)
-
-                mean_val = rev_x.mean(axis=0)
-                mean_val = mean_val.reshape(1,1,64,64)
-                d1 = (1/domain)*np.sum(input1**2)
-                n1 = (1/domain)*np.sum((input1-mean_val)**2)
-                m1 = n1/d1
-                final_concat.append(m1)
-            final_concat = np.array(final_concat)
-        return final_concat
 
     #==========================================================
     def mkdir(path):
@@ -249,6 +289,8 @@ def main():
     loss_train_all = []
     loss_test_all = []
     tic = time()
+
+
     for epoch in range(args.epochs):
         print('epoch number .......',epoch)
         loss_train = train(epoch, args.epochs)
@@ -260,20 +302,20 @@ def main():
             loss_test = np.mean(loss_test)
             print(('mean NLL :',loss_test))
             loss_test_all.append(loss_test)
-        #if epoch == (N_epochs-1):
-        #    final_error = test_NLL(epoch)
-        #    old_val = np.mean(final_error)
-        #    print('print error mean NLL:',np.mean(final_error))
 
     epoch1 = 200
     torch.save(INN_network.state_dict(), f'INN_network_epoch{epoch1}.pt')
     torch.save(cond_network.state_dict(), f'cond_network_epoch{epoch1}.pt')
+
     loss_train_all = np.array(loss_train_all)
     loss_test_all = np.array(loss_test_all)
+
     print('saving the training error and testing error')
     io.savemat('test_loss.mat', dict([('testing_loss',np.array(loss_test_all))]))
     print('plotting the training error and testing error')
+
     train_test_error(loss_train_all,loss_test_all, epoch1)
+
     toc = time()
     print('total traning taken:', toc-tic)
 
